@@ -164,6 +164,53 @@ describe('execute-sql tool', () => {
     });
   });
 
+  describe('cancellation', () => {
+    // The connector needs the request's AbortSignal to stop the query on the
+    // database. Without it a cancelled tool call only stops us waiting for the
+    // answer, and the query runs to completion server-side.
+    it('forwards the request AbortSignal to the connector', async () => {
+      vi.mocked(mockConnector.executeSQL).mockResolvedValue({ resultSets: [] });
+      const controller = new AbortController();
+
+      const handler = createExecuteSqlToolHandler('test_source');
+      // The shape the SDK actually hands a tool handler: `{ sessionId, mcpReq, http }`.
+      await handler({ sql: 'SELECT 1' }, { sessionId: 's', mcpReq: { signal: controller.signal } });
+
+      expect(mockConnector.executeSQL).toHaveBeenCalledWith(
+        'SELECT 1',
+        expect.objectContaining({ signal: controller.signal })
+      );
+    });
+
+    // Regression guard: reading `extra.signal` instead of `extra.mcpReq.signal` type-checks and
+    // passes a hand-rolled `{ signal }` fixture, while silently never cancelling anything in
+    // production — the signal is simply always undefined.
+    it('does not read a signal off the handler extra itself', async () => {
+      vi.mocked(mockConnector.executeSQL).mockResolvedValue({ resultSets: [] });
+      const controller = new AbortController();
+
+      const handler = createExecuteSqlToolHandler('test_source');
+      await handler({ sql: 'SELECT 1' }, { signal: controller.signal });
+
+      expect(mockConnector.executeSQL).toHaveBeenCalledWith(
+        'SELECT 1',
+        expect.objectContaining({ signal: undefined })
+      );
+    });
+
+    it('passes an undefined signal when the caller provides no extra', async () => {
+      vi.mocked(mockConnector.executeSQL).mockResolvedValue({ resultSets: [] });
+
+      const handler = createExecuteSqlToolHandler('test_source');
+      await handler({ sql: 'SELECT 1' }, null);
+
+      expect(mockConnector.executeSQL).toHaveBeenCalledWith(
+        'SELECT 1',
+        expect.objectContaining({ signal: undefined })
+      );
+    });
+  });
+
   describe('read-only mode enforcement', () => {
     // Statement-classification coverage (write keywords, comment stripping,
     // dialect-specific bypasses, ...) is pinned in
